@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>高難度節奏音樂遊戲</title>
+  <style>
+    :root {
+      --bg: #0f1220;
+      --lane: #1f2340;
+      --note: #78d5ff;
+      --hold: #9cff6f;
+      --line: #ffffffaa;
+      --text: #eaeaf0;
+      --accent: #ff78b5;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: system-ui, Arial, sans-serif;
+      background: radial-gradient(800px 800px at 50% 0%, #182037, var(--bg));
+      color: var(--text);
+    }
+    header, footer {
+      padding: 12px 16px;
+      display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+      border-bottom: 1px solid #ffffff10;
+    }
+    footer { border-top: 1px solid #ffffff10; border-bottom: none; justify-content: center; }
+    h1 { font-size: 18px; margin: 0; color: var(--accent); }
+    .controls { display: flex; gap: 12px; align-items: center; }
+    .hud { display: flex; gap: 18px; margin-left: auto; }
+    main { display: grid; place-items: center; padding: 16px; }
+    #gameCanvas {
+      background: linear-gradient(#0b0e18, #0b0e18), repeating-linear-gradient(
+        to right, var(--lane), var(--lane) 120px, #151932 120px, #151932 121px
+      );
+      border: 1px solid #ffffff22; border-radius: 8px;
+      box-shadow: 0 10px 30px #00000040, inset 0 -4px 0 #ffffff10;
+    }
+    .keymap { margin-top: 8px; opacity: 0.8; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>高難度節奏音樂遊戲</h1>
+    <div class="controls">
+      <label>
+        歌曲：
+        <input type="file" id="audioFile" accept="audio/*"/>
+      </label>
+      <button id="startBtn">開始遊戲</button>
+    </div>
+    <div class="hud">
+      <span>分數：<span id="score">0</span></span>
+      <span>連擊：<span id="combo">0</span></span>
+      <span>判定：<span id="judgement">-</span></span>
+    </div>
+  </header>
+
+  <main>
+    <canvas id="gameCanvas" width="480" height="720"></canvas>
+    <div class="keymap">
+      <div>鍵位：A S K L（對應四軌）</div>
+    </div>
+  </main>
+
+  <footer>
+    <p>© 2025 高難度音遊</p>
+  </footer>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    const lanes = 4;
+    const laneWidth = W / lanes;
+    const judgeLineY = H - 120;
+    const noteSpeed = 550;
+    const hitWindow = { perfect: 33, great: 66, good: 100 };
+    const keys = ['a','s','k','l'];
+    const keyDown = new Set();
+    let audio = null;
+    let startTime = 0;
+    let running = false;
+    let score = 0, combo = 0;
+    let lastJudgementText = '-';
+
+    // 高難度 MASTER 譜面（節選，實際可放完整）
+    const chart = [
+      { "type":"tap","t":1.000,"lane":0 },
+      { "type":"tap","t":1.333,"lane":1 },
+      { "type":"tap","t":1.666,"lane":2 },
+      { "type":"tap","t":2.000,"lane":3 },
+      { "type":"tap","t":2.500,"lane":0 },
+      { "type":"tap","t":2.666,"lane":1 },
+      { "type":"tap","t":2.833,"lane":2 },
+      { "type":"tap","t":3.000,"lane":3 },
+      { "type":"tap","t":3.166,"lane":2 },
+      { "type":"tap","t":3.333,"lane":1 },
+      { "type":"tap","t":3.500,"lane":0 },
+      { "type":"tap","t":3.750,"lane":0 }, { "type":"tap","t":3.750,"lane":3 },
+      // ...（可繼續貼完整高難度譜面）
+    ];
+
+    class Note {
+      constructor(n) {
+        Object.assign(this, n);
+        this.hit = false;
+        this.holdHit = false;
+        this.y = -50;
+      }
+    }
+    const notes = chart.map(n => new Note(n));
+
+    document.getElementById('startBtn').addEventListener('click', startGame);
+    document.getElementById('audioFile').addEventListener('change', onAudioSelect);
+    window.addEventListener('keydown', e => {
+      const k = e.key.toLowerCase();
+      if (keys.includes(k)) { keyDown.add(k); e.preventDefault(); }
+    });
+    window.addEventListener('keyup', e => {
+      const k = e.key.toLowerCase();
+      if (keys.includes(k)) { keyDown.delete(k); e.preventDefault(); }
+    });
+
+    function onAudioSelect(e) {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      audio = new Audio(URL.createObjectURL(file));
+      audio.preload = 'auto';
+    }
+
+    function startGame() {
+      if (!audio) {
+        alert('請先選擇歌曲音檔！');
+        return;
+      }
+      score = 0; combo = 0; lastJudgementText = '-';
+      updateHUD();
+      notes.forEach(n => { n.hit = false; n.holdHit = false; n.y = -50; });
+      running = true;
+      audio.currentTime = 0;
+      audio.play();
+      startTime = performance.now();
+      requestAnimationFrame(loop);
+    }
+
+    function loop(ts) {
+      if (!running) return;
+      const elapsedMs = ts - startTime;
+      const elapsedSec = elapsedMs / 1000;
+      update(elapsedSec);
+      render();
+      if (audio.ended) {
+        running = false;
+        lastJudgementText = 'END';
+        updateHUD();
+        return;
+      }
+      requestAnimationFrame(loop);
+    }
+
+    function update(t) {
+      notes.forEach(n => {
+        const timeToJudge = n.t - t;
+        const dist = timeToJudge * noteSpeed;
+        n.y = judgeLineY - dist;
+      });
+      notes.forEach(n => {
+        if (n.hit) return;
+        const laneKey = keys[n.lane];
+        const dtMs = (t - n.t) * 1000;
+        const near = Math.abs(dtMs) <= hitWindow.good && Math.abs(n.y - judgeLineY) < 30;
+        if (n.type === 'tap' && near && keyDown.has(laneKey)) {
+          judge(dtMs);
+          n.hit = true;
+        }
+        if (n.type === 'hold') {
+          if (!n.holdHit && near && keyDown.has(laneKey)) {
+            judge(dtMs);
+            n.holdHit = true;
+          }
+          if (n.holdHit && t >= n.t + n.d) {
+            n.hit = true;
+          }
+          if (n.holdHit && !keyDown.has(laneKey) && t < n.t + n.d && Math.abs(n.y - judgeLineY) < 60) {
+            miss();
+            n.hit = true;
+          }
+        }
+      });
+    }
+
+    function judge(dtMs) {
+      let j = 'GOOD', add = 300;
+      const adt = Math.abs(dtMs);
+      if (adt <= hitWindow.perfect) { j = 'PERFECT'; add = 1000; }
+      else if (adt <= hitWindow.great) { j = 'GREAT'; add = 600; }
+      score += add
